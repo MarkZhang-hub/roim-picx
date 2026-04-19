@@ -5,7 +5,7 @@
 <h1 align="center">roim-picx</h1>
 
 <p align="center">
-  <strong>🖼️ 一款基于 Cloudflare 的 Worker、R2、Pages、D1 实现的免费图床应用</strong>
+  <strong>🖼️ 一款基于 Cloudflare Workers、R2、D1 实现的免费图床应用</strong>
 </p>
 
 <p align="center">
@@ -80,8 +80,8 @@ graph TB
     end
     
     subgraph Cloudflare 基础设施
-        B --> C[Pages 静态托管]
-        B --> D[Pages Functions]
+      B --> C[Workers Static Assets]
+      B --> D[Cloudflare Worker]
         D -->|读写| E[(R2 对象存储)]
         D -->|持久化| H[(D1 数据库)]
         D -->|会话管理| F[(KV 键值存储)]
@@ -109,8 +109,7 @@ graph TB
 
 | 技术 | 说明 |
 |:---|:---|
-| **Cloudflare Pages** | 静态网站托管平台，支持全球 CDN 加速 |
-| **Pages Functions** | 基于 Cloudflare Workers 的 Serverless 函数 |
+| **Cloudflare Workers** | 统一承载 SPA 静态资源与 API 路由，支持全球 CDN 加速 |
 | **Hono** | 轻量级、高性能的 Web 框架，运行在 Edge Runtime |
 | **R2** | S3 兼容的对象存储服务，用于存储图片文件 |
 | **D1** | Cloudflare 的原生 SQL 数据库，用于存储结构化元数据和统计信息 |
@@ -126,9 +125,11 @@ roim-picx/
 │   ├── 📁 utils/              # 工具函数
 │   ├── 📁 plugins/            # 插件配置
 │   └── 📄 App.vue             # 根组件
-├── 📁 functions/              # Cloudflare Pages Functions
+├── 📁 functions/              # Hono API 模块
 │   └── 📁 rest/               # RESTful API 路由
-│       └── 📄 [[route]].ts    # 动态路由处理
+│       └── 📄 app.ts          # Hono 应用入口
+├── 📁 worker/                 # Cloudflare Worker 入口
+│   └── 📄 index.ts            # Worker 主入口
 ├── 📁 public/                 # 静态资源
 ├── 📁 docs/                   # 文档资源
 ├── 📁 migrations/             # D1 数据库迁移文件
@@ -164,96 +165,131 @@ sequenceDiagram
 
 ## 🚀 部署教程
 
-### 1️⃣ Fork 项目
+本项目现在通过 Cloudflare Workers + Workers Static Assets 部署，不再依赖 Cloudflare Pages。
 
-将本项目 Fork 到自己的 GitHub 账户
-
-### 2️⃣ 注册 Cloudflare 并开通 R2 服务
-
-![开通 R2 服务](docs/r2.png)
-
-### 3️⃣ 创建 Pages 项目
-
-找到 Pages 选项并创建项目
-
-![创建项目](docs/1.png)
-
-### 4️⃣ 链接代码仓库
-
-连接 GitHub 或 GitLab 并选择需要构建的项目
-
-![链接仓库](docs/2.png)
-
-### 5️⃣ 设置环境变量
-
-![设置环境变量](docs/3.png)
-
-### 6️⃣ 绑定 R2 和 KV 服务
-
-在项目创建后，设置项目的函数信息绑定 R2 和 KV 服务
-
-![绑定服务](docs/build_setting.png)
-
-### 7️⃣ 构建项目
-
-构建项目，提示成功即可访问
-
-![构建成功](docs/build_success.png)
-
-> [!NOTE]
-> Pages 的函数变量名称需要与项目的变量名称一致。  
-> 如需修改 functions 里面的 Env 命名空间，对应的文件是 `[[route]].ts`
-
-### 8️⃣ 数据库迁移
-
-在本地环境执行以下命令将初始表结构导入到 D1：
+### 1️⃣ 安装依赖并登录 Cloudflare
 
 ```bash
-npx wrangler d1 execute <YOUR_DATABASE_NAME> --remote --file=./migrations/0001_init.sql
-
-首次升级可以使用命令进行数据库初始化
-
-```bash
-wrangler d1 migrations apply <YOUR_DATABASE_NAME> --remote
+pnpm install
+pnpm exec wrangler login
 ```
 
-在部署 Cloudflare Pages 时，需要在 **Settings -> Variables and Secrets** 中配置以下环境变量：
+### 2️⃣ 创建 R2、KV、D1 资源
+
+```bash
+pnpm exec wrangler r2 bucket create <YOUR_BUCKET_NAME>
+pnpm exec wrangler kv namespace create <YOUR_KV_NAMESPACE>
+pnpm exec wrangler d1 create <YOUR_DATABASE_NAME>
+```
+
+记录以下返回值，稍后写入 `wrangler.toml`：
+
+- KV namespace id
+- D1 database id
+- R2 bucket name
+
+### 3️⃣ 配置 Worker 与资源绑定
+
+复制 `wrangler.toml.example` 为 `wrangler.toml`，然后填写以下内容：
+
+- `main = "worker/index.ts"`
+- `[assets]`：用于托管 `dist`，并将 `/rest/*` 请求交给 Worker
+- `[[kv_namespaces]]`：填写 `XK` 对应的 namespace id
+- `[[r2_buckets]]`：填写 `PICX` 对应的 bucket_name
+- `[[d1_databases]]`：填写 `DB` 对应的 `database_name` 和 `database_id`
+- `[vars]`：填写运行时使用的非敏感变量
+
+### 4️⃣ 配置运行时变量与 Secret
+
+运行时变量放在 `wrangler.toml` 的 `[vars]` 中；敏感信息建议使用 Workers Secret：
+
+```bash
+pnpm exec wrangler secret put PICX_AUTH_TOKEN
+pnpm exec wrangler secret put GITHUB_CLIENT_SECRET
+pnpm exec wrangler secret put GOOGLE_CLIENT_SECRET
+pnpm exec wrangler secret put STEAM_API_KEY
+pnpm exec wrangler secret put HF_TOKEN
+```
+
+### 5️⃣ 配置 Vite 构建期变量
+
+`VITE_*` 变量是前端构建期变量，应写入本地 `.env` 或在执行部署命令前通过 shell 注入，而不是依赖 Worker 运行时变量。
+
+### 运行时变量（`wrangler.toml` 的 `[vars]` 或 Secret）
 
 ### 核心配置
 
 | 变量名 | 必填 | 示例值 | 说明 |
 |:---|:---:|:---|:---|
-| `BASE_URL` | 是 | `https://picx.your-domain.com` | 应用的根域名地址，用于生成完整链接 |
-| `PICX_AUTH_TOKEN` | 是 | `your-secret-token` | 管理员 Token，用于管理接口认证 |
+| `BASE_URL` | 是 | `https://picx.your-domain.com` | 应用根域名，用于生成完整链接与 OAuth 回调 |
+| `PICX_AUTH_TOKEN` | 是 | `your-secret-token` | 管理员 Token，建议用 `wrangler secret put` 配置 |
 | `ALLOW_TOKEN_LOGIN` | 否 | `true` | 是否允许使用管理 Token 直接登录后台 |
-| `STORAGE_TYPE` | 否 | `R2` | 默认存储类型，可选 `R2` 或 `HF` (Hugging Face) |
+| `STORAGE_TYPE` | 否 | `R2` | 默认存储类型，可选 `R2` 或 `HF` |
 
-### GitHub OAuth 登录(可选)
+### GitHub OAuth 登录（可选）
 
 | 变量名 | 必填 | 说明 |
 |:---|:---:|:---|
 | `GITHUB_CLIENT_ID` | 是 | GitHub OAuth App 的 Client ID |
-| `GITHUB_CLIENT_SECRET` | 是 | GitHub OAuth App 的 Client Secret |
-| `VITE_GITHUB_CLIENT_ID` | 是 | 同 `GITHUB_CLIENT_ID`，用于前端调用 |
+| `GITHUB_CLIENT_SECRET` | 是 | GitHub OAuth App 的 Client Secret，建议使用 Secret |
 | `GITHUB_OWNER` | 是 | 允许登录的 GitHub 用户名，`*` 表示允许所有人 |
-| `ADMIN_USERS` | 否 | 超级管理员用户名列表，逗号分隔 (例: `user1,user2`) |
+| `ADMIN_USERS` | 否 | 超级管理员用户名列表，逗号分隔 |
 
-### Google & Steam 登录(可选)
+### Google 与 Steam 登录（可选）
 
 | 变量名 | 必填 | 说明 |
 |:---|:---:|:---|
 | `STEAM_LOGIN_ENABLED` | 否 | 是否启用 Steam 登录 (`true`/`false`) |
-| `STEAM_API_KEY` | 否 | Steam Web API Key |
+| `STEAM_API_KEY` | 否 | Steam Web API Key，建议使用 Secret |
 | `GOOGLE_LOGIN_ENABLED` | 否 | 是否启用 Google 登录 (`true`/`false`) |
 | `GOOGLE_CLIENT_ID` | 否 | Google OAuth Client ID |
-| `GOOGLE_CLIENT_SECRET` | 否 | Google OAuth Client Secret |
+| `GOOGLE_CLIENT_SECRET` | 否 | Google OAuth Client Secret，建议使用 Secret |
 
-### Hugging Face 存储 (可选)
+### Hugging Face 存储（可选）
 
 | 变量名 | 必填 | 说明 |
 |:---|:---:|:---|
-| `HF_TOKEN` | 否 | Hugging Face Access Token (需要有写权限) |
-| `HF_REPO` | 否 | Hugging Face 数据集仓库名 (例: `username/dataset`) |
+| `HF_TOKEN` | 否 | Hugging Face Access Token，建议使用 Secret |
+| `HF_REPO` | 否 | Hugging Face 数据集仓库名，例如 `username/dataset` |
+
+### 构建期变量（本地 `.env`）
+
+| 变量名 | 必填 | 说明 |
+|:---|:---:|:---|
+| `VITE_GITHUB_CLIENT_ID` | 仅 GitHub 登录时必填 | 前端 GitHub OAuth Client ID |
+| `VITE_APP_API_URL` | 否 | 前端 API 基地址；同域部署时可留空 |
+
+### 6️⃣ 执行数据库迁移
+
+```bash
+pnpm exec wrangler d1 migrations apply <YOUR_DATABASE_NAME> --remote
+```
+
+### 7️⃣ 本地运行 Worker
+
+```bash
+pnpm exec wrangler dev
+```
+
+Worker 会自动构建前端静态资源，`/rest/*` 路由优先进入 Hono API，其他路径按 SPA 方式回退到 `index.html`。
+
+### 8️⃣ 部署到 Cloudflare Workers
+
+```bash
+pnpm exec wrangler deploy
+```
+
+### 9️⃣ 绑定自定义域名（可选）
+
+在 `wrangler.toml` 中加入以下配置即可将 Worker 直接绑定到自定义域名：
+
+```toml
+[[routes]]
+pattern = "img.example.com"
+custom_domain = true
+```
+
+如果你使用的是根域名或已有复杂 DNS 规则，也可以继续在 Dashboard 中管理域名绑定。
 
 ---
 

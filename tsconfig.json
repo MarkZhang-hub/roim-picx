@@ -3,7 +3,7 @@
     "target": "esnext",
     "useDefineForClassFields": true,
     "module": "esnext",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "strict": true,
     "jsx": "preserve",
     "sourceMap": true,
@@ -12,16 +12,17 @@
     "lib": [
       "esnext",
       "dom"
+    ],
+    "types": [
+      "@cloudflare/workers-types"
     ]
   },
-  "types": [
-    "@cloudflare/workers-types"
-  ],
   "include": [
     "src/**/*.ts",
     "src/**/*.d.ts",
     "src/**/*.tsx",
-    "src/**/*.vue"
-  ],
-  "exclude": ["functions/**/*"]
+	"src/**/*.vue",
+	"functions/**/*.ts",
+	"worker/**/*.ts"
+  ]
 }

@@ -4,6 +4,8 @@ package-lock.json
 yarn.lock
 dist
 .wrangler
+.dev.vars*
 .env
 .env.development
 backup
+wrangler.toml

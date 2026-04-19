@@ -18,22 +18,31 @@ npx wrangler d1 create picx-db
 npx wrangler d1 execute picx-db --local --file=./migrations/0001_init.sql
 
 # 生产环境
-npx wrangler d1 execute picx-db --file=./migrations/0001_init.sql
+npx wrangler d1 execute picx-db --remote --file=./migrations/0001_init.sql
 ```
 
-## 3. 配置 Cloudflare Pages
+## 3. 配置 Cloudflare Worker 绑定
 
-在 Cloudflare Dashboard 中配置 Pages 项目：
+在 `wrangler.toml` 中添加 D1 绑定：
 
-1. 进入 **Workers & Pages** > 你的 Pages 项目
-2. 点击 **Settings** > **Functions**
-3. 在 **D1 database bindings** 中添加：
-   - Variable name: `DB`
-   - D1 database: 选择 `picx-db`
+```toml
+main = "worker/index.ts"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/rest/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "picx-db"
+database_id = "your-database-id"
+```
 
 ## 4. 配置环境变量
 
-在 **Settings** > **Environment variables** 中添加：
+非敏感变量放在 `wrangler.toml` 的 `[vars]` 中，敏感变量使用 `wrangler secret put`：
 
 | 变量名 | 说明 | 示例 |
 |:---|:---|:---|
@@ -46,6 +55,13 @@ npx wrangler d1 execute picx-db --file=./migrations/0001_init.sql
 ```toml
 name = "roim-picx"
 compatibility_date = "2024-01-01"
+main = "worker/index.ts"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/rest/*"]
 
 [[d1_databases]]
 binding = "DB"
@@ -54,6 +70,12 @@ database_id = "your-database-id"  # 替换为实际的 database_id
 
 [vars]
 ADMIN_USERS = "your-github-username"
+```
+
+本地运行：
+
+```bash
+pnpm exec wrangler dev
 ```
 
 ## 6. 权限说明
